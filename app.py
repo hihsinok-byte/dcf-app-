@@ -13,16 +13,15 @@ except:
 st.set_page_config(page_title="Gemini AI DCFアナリスト", layout="wide")
 st.title("Gemini AI 自動調査・精緻DCF分析ツール")
 
-ticker = st.text_input("銘柄名または証券コードを入力（例：トヨタ、積水化学）", placeholder="積水化学")
+ticker = st.text_input("銘柄名を入力（例：トヨタ、積水化学）", placeholder="積水化学")
 
 def fetch_financial_data(ticker_name):
-    # 【安定化のため 1.5-flash に変更】
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # 【修正ポイント】モデル名を最新の正式名称「gemini-1.5-flash-latest」に変更
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     
     prompt = f"""
-    株式アナリストとして、{ticker_name}の最新財務データ（2024-2025年）に基づいたDCF分析用数値を調査・推論してください。
-    回答は必ず以下のJSON形式のデータのみを出力してください。説明文は不要です。
-    
+    株式アナリストとして、{ticker_name}の最新財務データを調査し、DCF分析用数値を推論してください。
+    回答は必ず以下のJSON形式のデータのみを出力してください。
     {{
         "company_name": "会社名",
         "current_price": 数値,
@@ -42,22 +41,21 @@ def fetch_financial_data(ticker_name):
     response = model.generate_content(prompt)
     res_text = response.text
     
-    # JSON部分を抜き出す
     json_match = re.search(r'\{.*\}', res_text, re.DOTALL)
     if json_match:
         return json.loads(json_match.group())
     else:
-        raise ValueError("AI回答の解析に失敗しました。")
+        raise ValueError("データの解析に失敗しました。")
 
 if st.button("AI分析を実行"):
     if not ticker:
         st.warning("銘柄を入力してください")
     else:
-        with st.spinner("Gemini 1.5が安定モードで分析中..."):
+        with st.spinner("Geminiが最新データを分析中..."):
             try:
                 data = fetch_financial_data(ticker)
                 
-                # 計算処理
+                # 数値の計算
                 sales = float(data['sales'])
                 shares = float(data['shares_outstanding'])
                 current_price = float(data['current_price'])
@@ -80,7 +78,7 @@ if st.button("AI分析を実行"):
                 equity_value = (pv_fcf_sum + pv_tv) - float(data['net_debt'])
                 theoretical_price = equity_value / shares
                 
-                # 結果表示
+                # 表示
                 st.success(f"分析完了: {data['company_name']}")
                 c1, c2, c3 = st.columns(3)
                 c1.metric("理論株価", f"¥{theoretical_price:,.0f}")
@@ -88,9 +86,9 @@ if st.button("AI分析を実行"):
                 upside = (theoretical_price / current_price - 1) * 100
                 c3.metric("上昇余地", f"{upside:+.1f}%")
                 
-                with st.expander("詳細データを見る"):
-                    st.write(data)
+                with st.expander("AIが調査した財務数値の詳細"):
+                    st.table(pd.Series(data).to_frame(name="調査値"))
                 
             except Exception as e:
-                st.error(f"エラーが発生しました。時間を置いて再度お試しください。")
+                st.error("エラーが発生しました。時間を置いて再度お試しください。")
                 st.caption(f"エラー詳細: {e}")
