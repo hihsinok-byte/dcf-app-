@@ -5,33 +5,29 @@ import pandas as pd
 import re
 
 # --- 1. 秘密鍵の設定 ---
-try:
-    # 以前設定いただいた Secrets からキーを取得
-    api_key = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
-except Exception:
-    st.error("SecretsにGEMINI_API_KEYが設定されていません。")
+if "GEMINI_API_KEY" not in st.secrets:
+    st.error("StreamlitのSecretsにGEMINI_API_KEYが設定されていません。")
+else:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# --- 2. 画面構成の設定 ---
+# --- 2. 画面構成 ---
 st.set_page_config(page_title="AI株価アナリスト", layout="wide")
-st.title("🚀 Gemini AI 2.0 精緻DCF分析ツール")
+st.title("🚀 Gemini AI 2.0 専門家仕様・DCF分析")
 st.markdown("---")
 
-# 銘柄入力
-ticker = st.text_input("銘柄名を入力（例：トヨタ自動車、積水化学）", placeholder="積水化学")
+ticker = st.text_input("銘柄名を入力（例：トヨタ、積水化学）", placeholder="積水化学")
 
-# --- 3. AIによるデータ取得関数 ---
-def get_ai_analysis(ticker_name):
-    # 最新の 2.0 Flash モデルを使用
-    model = genai.GenerativeModel('gemini-2.0-flash')
+def fetch_analysis(ticker_name):
+    # 【最重要修正】モデル名を最新の 2.0 Flash に固定し、世代指定を確実にします
+    model = genai.GenerativeModel('models/gemini-2.0-flash')
     
     prompt = f"""
-    株式アナリストとして、{ticker_name}の最新財務データを調査し、DCF分析用数値を出力してください。
-    回答は必ず以下のJSON形式のみを出力してください。説明は一切不要です。
+    株式アナリストとして、{ticker_name}の最新財務データ（2024-2025年）を調査し、DCF分析用数値を出力してください。
+    回答は必ず以下のJSON形式のみを出力し、説明文は一切含めないでください。
     
     {{
         "company_name": "{ticker_name}",
-        "current_price": 数値(円),
+        "current_price": 数値,
         "shares_outstanding": 数値(百万株),
         "net_debt": 数値(百万円),
         "sales": 数値(百万円),
@@ -44,66 +40,64 @@ def get_ai_analysis(ticker_name):
         "market_premium": 数値(%)
     }}
     """
-    
     response = model.generate_content(prompt)
-    # AIの返答からJSONだけを抜き出す
-    match = re.search(r'\{.*\}', response.text, re.DOTALL)
-    if not match:
-        raise ValueError("AIからの回答が読み取れませんでした。")
-    return json.loads(match.group())
-
-# --- 4. メイン処理 ---
-if st.button("AI分析を実行する"):
-    if not ticker:
-        st.warning("銘柄を入力してください")
+    
+    # JSON抽出の精度を上げます
+    text = response.text
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        return json.loads(match.group())
     else:
-        with st.spinner("Gemini 2.0 が最新データを分析中..."):
+        raise ValueError("AIの回答からデータを抽出できませんでした。")
+
+if st.button("AI分析を実行"):
+    if not ticker:
+        st.warning("銘柄名を入力してください")
+    else:
+        with st.spinner("最新のGemini 2.0が財務データを解析中..."):
             try:
-                res = get_ai_analysis(ticker)
+                data = fetch_analysis(ticker)
                 
-                # 数値の整理
-                cp = float(res['current_price'])
-                sh = float(res['shares_outstanding'])
-                debt = float(res['net_debt'])
-                sales = float(res['sales'])
-                wacc = (float(res['risk_free_rate']) + float(res['beta']) * float(res['market_premium'])) / 100
+                # 計算用数値の変換
+                cp = float(data['current_price'])
+                sh = float(data['shares_outstanding'])
+                sales = float(data['sales'])
+                wacc = (float(data['risk_free_rate']) + float(data['beta']) * float(data['market_premium'])) / 100
                 
-                # DCF計算（5年分）
+                # DCF計算
                 fcf_list = []
                 pv_sum = 0
                 curr_s = sales
                 for y in range(1, 6):
-                    g = float(res['growth_rate_high']) if y <= 3 else float(res['growth_rate_stable'])
+                    g = float(data['growth_rate_high']) if y <= 3 else float(data['growth_rate_stable'])
                     curr_s *= (1 + g/100)
-                    fcf = curr_s * (float(res['fcf_margin'])/100)
+                    fcf = curr_s * (float(data['fcf_margin'])/100)
                     fcf_list.append(fcf)
                     pv_sum += fcf / ((1 + wacc)**y)
                 
-                tg = float(res['terminal_growth']) / 100
+                tg = float(data['terminal_growth']) / 100
                 tv = (fcf_list[-1] * (1 + tg)) / (wacc - tg)
                 pv_tv = tv / ((1 + wacc)**5)
                 
-                value = (pv_sum + pv_tv) - debt
-                theoretical_price = value / sh
+                total_value = (pv_sum + pv_tv) - float(data['net_debt'])
+                theoretical_price = total_value / sh
                 upside = (theoretical_price / cp - 1) * 100
 
-                # --- 画面表示（デザインを強化） ---
-                st.success(f"### 分析完了: {res['company_name']}")
+                # --- 画面表示（ハッキリ見えるデザイン） ---
+                st.success(f"### 分析完了: {data['company_name']}")
                 
-                # 指標をタイル表示
-                col1, col2, col3 = st.columns(3)
-                col1.metric("算出された理論株価", f"¥{theoretical_price:,.0f}")
-                col2.metric("現在の株価", f"¥{cp:,.0f}")
-                col3.metric("上昇余地", f"{upside:+.1f}%", delta=f"{upside:+.1f}%")
+                # タイル形式で数値を表示
+                c1, c2, c3 = st.columns(3)
+                c1.metric("理論株価", f"¥{theoretical_price:,.0f}")
+                c2.metric("現在株価", f"¥{cp:,.0f}")
+                c3.metric("上昇余地", f"{upside:+.1f}%", delta=f"{upside:+.1f}%")
 
-                # グラフ
-                st.write("#### 将来フリーキャッシュフロー予測（百万円）")
-                df_fcf = pd.DataFrame({"FCF": fcf_list}, index=[f"{y}年目" for y in range(1, 6)])
-                st.bar_chart(df_fcf)
+                st.write("#### 将来5年間の予測キャッシュフロー")
+                st.bar_chart(pd.DataFrame(fcf_list, index=[f"{y}年目" for y in range(1, 6)], columns=["FCF"]))
 
-                with st.expander("AIが調査した財務パラメータの詳細"):
-                    st.write(res)
+                with st.expander("AIの調査根拠データ（詳細）"):
+                    st.write(data)
 
             except Exception as e:
-                st.error(f"分析中にエラーが発生しました。")
-                st.caption(f"技術的なエラー詳細: {e}")
+                st.error("分析エラーが発生しました。時間を置いて再試行してください。")
+                st.caption(f"エラー詳細: {e}")
