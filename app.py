@@ -5,19 +5,19 @@ import pandas as pd
 import re
 
 # 秘密鍵の読み込み
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-except:
+if "GEMINI_API_KEY" not in st.secrets:
     st.error("SecretsにGEMINI_API_KEYが設定されていません。")
+else:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-st.set_page_config(page_title="Gemini AI DCFアナリスト", layout="wide")
-st.title("Gemini AI 自動調査・精緻DCF分析ツール")
+st.set_page_config(page_title="Gemini AI DCF分析", layout="wide")
+st.title("Gemini AI 自動調査・精緻DCF分析")
 
-ticker = st.text_input("銘柄名を入力（例：トヨタ、積水化学）", placeholder="積水化学")
+ticker = st.text_input("銘柄名を入力（例：トヨタ、積水化学）", placeholder="トヨタ")
 
 def fetch_financial_data(ticker_name):
-    # 【修正ポイント】モデル名を最新の正式名称「gemini-1.5-flash-latest」に変更
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # 【最重要】名前を最も標準的な「gemini-1.5-flash」に固定
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
     株式アナリストとして、{ticker_name}の最新財務データを調査し、DCF分析用数値を推論してください。
@@ -41,6 +41,7 @@ def fetch_financial_data(ticker_name):
     response = model.generate_content(prompt)
     res_text = response.text
     
+    # JSON部分を抽出
     json_match = re.search(r'\{.*\}', res_text, re.DOTALL)
     if json_match:
         return json.loads(json_match.group())
@@ -51,7 +52,7 @@ if st.button("AI分析を実行"):
     if not ticker:
         st.warning("銘柄を入力してください")
     else:
-        with st.spinner("Geminiが最新データを分析中..."):
+        with st.spinner("AIが最新データを分析中..."):
             try:
                 data = fetch_financial_data(ticker)
                 
@@ -86,9 +87,8 @@ if st.button("AI分析を実行"):
                 upside = (theoretical_price / current_price - 1) * 100
                 c3.metric("上昇余地", f"{upside:+.1f}%")
                 
-                with st.expander("AIが調査した財務数値の詳細"):
-                    st.table(pd.Series(data).to_frame(name="調査値"))
+                st.write("### AI調査データ詳細")
+                st.write(data)
                 
             except Exception as e:
-                st.error("エラーが発生しました。時間を置いて再度お試しください。")
-                st.caption(f"エラー詳細: {e}")
+                st.error(f"エラー: {e}")
