@@ -1,4 +1,4 @@
-import streamlit as st
+                import streamlit as st
 import google.generativeai as genai
 import json
 import pandas as pd
@@ -29,7 +29,7 @@ def clean_float(value):
 def fetch_analysis(ticker_name):
     model = genai.GenerativeModel('gemini-2.5-flash')
     
-    # 【変更点】AIが過大評価しないよう、プロの基準（キャップ）を指示文に追加
+    # 【修正箇所】yahoo_tickerの例を固定ではなく「証券コード4桁.T」に変更
     prompt = f"""
     あなたはプロの証券アナリストです。{ticker_name}の直近の財務データを基に、DCF分析に必要な数値を算出して出力してください。
     
@@ -37,12 +37,12 @@ def fetch_analysis(ticker_name):
     1. 製造業（特に自動車や化学など）は設備投資が巨額なため、フリーキャッシュフロー・マージン（fcf_margin）は通常「2%〜6%」の範囲です。IT企業のような過大なマージン（10%以上など）は絶対に設定せず、保守的な数値を設定してください。
     2. 永久成長率（terminal_growth）は日本の経済環境を考慮し、「0%〜1.0%」の非常に保守的な数値を設定してください。
     3. 金額や株数などは省略単位を使わず、必ず「1の位」までのフル桁数で出力してください。
-    4. 日本の銘柄の場合、yahoo_ticker は必ず「証券コード4桁.T」の形式にしてください。金融事業の負債はnet_debtから除外してください。
+    4. yahoo_ticker は、その銘柄の正しい証券コードを出力してください（例：日本の銘柄なら 6506.T のような4桁数字＋.T）。
     
     必ず以下のJSON形式のみを出力してください。
     {{
         "company_name": "{ticker_name}",
-        "yahoo_ticker": "7203.T",
+        "yahoo_ticker": "証券コード4桁.T",
         "current_price_fallback": 最新の株価(円),
         "shares_outstanding_fallback": 発行済株式総数(株),
         "net_debt": 有利子負債 - 現金同等物(フル桁数),
