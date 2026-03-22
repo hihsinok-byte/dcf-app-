@@ -11,7 +11,7 @@ else:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 st.set_page_config(page_title="AI株価アナリスト PRO", layout="wide")
-st.title("🚀 Gemini AI 2.5 プロ投資家仕様 (株式分割・自動補正版)")
+st.title("🚀 Gemini AI 2.5 プロ投資家仕様 (現実シナリオ版)")
 
 ticker = st.text_input("銘柄名を入力", placeholder="トヨタ自動車")
 
@@ -28,13 +28,16 @@ def clean_float(value):
 
 def fetch_analysis(ticker_name):
     model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    # 【変更点】AIが過大評価しないよう、プロの基準（キャップ）を指示文に追加
     prompt = f"""
     あなたはプロの証券アナリストです。{ticker_name}の直近の財務データを基に、DCF分析に必要な数値を算出して出力してください。
     
-    【重要】
-    ・金額や株数などは省略単位を使わず、必ず「1の位」までのフル桁数で出力してください。
-    ・日本の銘柄の場合、yahoo_ticker は必ず「証券コード4桁.T」の形式にしてください（例：トヨタ自動車なら 7203.T）。
-    ・金融子会社を持つ企業の場合、net_debt（純有利子負債）から「金融事業の負債」は除外して見積もってください。
+    【極めて重要なアナリスト規定】
+    1. 製造業（特に自動車や化学など）は設備投資が巨額なため、フリーキャッシュフロー・マージン（fcf_margin）は通常「2%〜6%」の範囲です。IT企業のような過大なマージン（10%以上など）は絶対に設定せず、保守的な数値を設定してください。
+    2. 永久成長率（terminal_growth）は日本の経済環境を考慮し、「0%〜1.0%」の非常に保守的な数値を設定してください。
+    3. 金額や株数などは省略単位を使わず、必ず「1の位」までのフル桁数で出力してください。
+    4. 日本の銘柄の場合、yahoo_ticker は必ず「証券コード4桁.T」の形式にしてください。金融事業の負債はnet_debtから除外してください。
     
     必ず以下のJSON形式のみを出力してください。
     {{
@@ -69,35 +72,29 @@ if st.button("AI本格分析を実行"):
             try:
                 data = fetch_analysis(ticker)
                 
-                # --- 1. リアルデータの取得 (yfinance) ---
                 cp = clean_float(data.get('current_price_fallback', 0))
                 sh = clean_float(data.get('shares_outstanding_fallback', 0))
                 data_source_msg = "⚠️ リアルタイムデータの取得に失敗したため、AIの予測値を使用しています。"
                 
                 try:
                     ticker_symbol = data.get('yahoo_ticker', '')
-                    # 証券コードだけの入力だった場合、自動で .T を補完する
                     if ticker_symbol and not ticker_symbol.endswith('.T') and ticker_symbol.isdigit():
                         ticker_symbol += '.T'
                         
                     if ticker_symbol:
                         yf_ticker = yf.Ticker(ticker_symbol)
                         info = yf_ticker.info
-                        
-                        # 株価の取得
                         if 'currentPrice' in info and info['currentPrice'] is not None:
                             cp = float(info['currentPrice'])
                         elif 'regularMarketPrice' in info and info['regularMarketPrice'] is not None:
                             cp = float(info['regularMarketPrice'])
                             
-                        # 【重要】分割反映済みの最新株式数を取得
                         if 'sharesOutstanding' in info and info['sharesOutstanding'] is not None:
                             sh = float(info['sharesOutstanding'])
                             data_source_msg = f"✅ 市場から最新の株価と株式数（分割反映済み: {sh:,.0f}株）を取得し、計算に適用しました。"
                 except Exception as e:
                     pass
 
-                # --- 2. 共通パラメータ ---
                 sales = clean_float(data.get('sales', 0))
                 debt = clean_float(data.get('net_debt', 0))
                 fcf_margin = clean_float(data.get('fcf_margin', 0))
@@ -112,7 +109,6 @@ if st.button("AI本格分析を実行"):
                 tg = tg_val / 100
                 if wacc <= tg: tg = wacc - 0.01
 
-                # --- 3. 安定DCF計算関数 ---
                 def calculate_scenario(growth_rate):
                     fcf_list = []
                     pv_sum = 0
@@ -130,15 +126,12 @@ if st.button("AI本格分析を実行"):
                     upside = (price / cp - 1) * 100 if cp > 0 else 0
                     return price, upside, fcf_list
 
-                # 3つのシナリオを計算
                 bull_price, bull_up, bull_fcf = calculate_scenario(clean_float(data.get('growth_rate_bull', 0)))
                 base_price, base_up, base_fcf = calculate_scenario(clean_float(data.get('growth_rate_base', 0)))
                 bear_price, bear_up, bear_fcf = calculate_scenario(clean_float(data.get('growth_rate_bear', 0)))
 
-                # --- 画面表示 ---
                 st.success(f"### 分析完了: {data.get('company_name', ticker)} ({data.get('yahoo_ticker', '')})")
                 
-                # データ取得が成功したかどうかを画面に表示
                 if "✅" in data_source_msg:
                     st.info(data_source_msg)
                 else:
