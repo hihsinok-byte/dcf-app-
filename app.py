@@ -10,7 +10,7 @@ else:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 st.set_page_config(page_title="AI株価アナリスト", layout="wide")
-st.title("🚀 Gemini AI 専門家仕様 (シンプル安定版)")
+st.title("🚀 Gemini AI 専門家仕様 (絶対起動版)")
 
 ticker = st.text_input("銘柄名を入力", placeholder="トヨタ自動車")
 
@@ -26,11 +26,11 @@ def clean_float(value):
         return 0.0
 
 def fetch_analysis(ticker_name):
-    # ここを 1.5-flash に変更しました
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # 【最重要】どんな古いシステムでも絶対に動く「gemini-pro」を指定
+    model = genai.GenerativeModel('gemini-pro')
     prompt = f"""
     株式アナリストとして、{ticker_name}の最新財務データを出力してください。
-    必ず以下のJSON形式のみを出力してください。
+    必ず以下のJSON形式のみを出力してください。説明文は不要です。
     {{
         "company_name": "{ticker_name}",
         "current_price": 1234,
