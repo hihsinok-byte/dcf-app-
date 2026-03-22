@@ -11,7 +11,7 @@ else:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 st.set_page_config(page_title="AI株価アナリスト PRO", layout="wide")
-st.title("🚀 Gemini AI 2.5 プロ投資家仕様 (全部入り完成版)")
+st.title("🚀 Gemini AI 2.5 プロ投資家仕様 (株式分割・自動補正版)")
 
 ticker = st.text_input("銘柄名を入力", placeholder="トヨタ自動車")
 
@@ -29,23 +29,22 @@ def clean_float(value):
 def fetch_analysis(ticker_name):
     model = genai.GenerativeModel('gemini-2.5-flash')
     prompt = f"""
-    あなたはプロの証券アナリストです。{ticker_name}の直近の財務データを基に、本格的なDCF分析に必要な数値を算出して出力してください。
+    あなたはプロの証券アナリストです。{ticker_name}の直近の財務データを基に、DCF分析に必要な数値を算出して出力してください。
     
-    【重要】金額や株数などは省略単位を使わず、必ず「1の位」までのフル桁数で出力してください。
+    【重要】
+    ・金額や株数などは省略単位を使わず、必ず「1の位」までのフル桁数で出力してください。
+    ・日本の銘柄の場合、yahoo_ticker は必ず「証券コード4桁.T」の形式にしてください（例：トヨタ自動車なら 7203.T）。
+    ・金融子会社を持つ企業の場合、net_debt（純有利子負債）から「金融事業の負債」は除外して見積もってください。
     
     必ず以下のJSON形式のみを出力してください。
     {{
         "company_name": "{ticker_name}",
-        "yahoo_ticker": "日本の銘柄は 7203.T のように.Tをつける。米国株はAAPLなど。",
-        "current_price_fallback": 最新の株価(円またはドル),
+        "yahoo_ticker": "7203.T",
+        "current_price_fallback": 最新の株価(円),
         "shares_outstanding_fallback": 発行済株式総数(株),
         "net_debt": 有利子負債 - 現金同等物(フル桁数),
         "sales": 直近の年間売上高(フル桁数),
-        "ebit_margin": 営業利益率(%),
-        "tax_rate": 実効税率(%),
-        "da_margin": 売上高に対する減価償却費の割合(%),
-        "capex_margin": 売上高に対する設備投資の割合(%),
-        "nwc_margin": 売上高に対する運転資本増減の割合(%),
+        "fcf_margin": 売上高に対するフリーキャッシュフロー・マージン(%),
         "growth_rate_bull": 楽観的（強気）な今後3年間の売上高成長率(%),
         "growth_rate_base": 基本的な今後3年間の売上高成長率(%),
         "growth_rate_bear": 悲観的（弱気）な今後3年間の売上高成長率(%),
@@ -66,34 +65,42 @@ if st.button("AI本格分析を実行"):
     if not ticker:
         st.warning("銘柄名を入力してください")
     else:
-        with st.spinner("AIが財務データを解析し、市場のリアルタイムデータを取得中..."):
+        with st.spinner("AIが財務データを解析し、市場の最新株式数（分割反映済）を取得中..."):
             try:
                 data = fetch_analysis(ticker)
                 
                 # --- 1. リアルデータの取得 (yfinance) ---
                 cp = clean_float(data.get('current_price_fallback', 0))
                 sh = clean_float(data.get('shares_outstanding_fallback', 0))
+                data_source_msg = "⚠️ リアルタイムデータの取得に失敗したため、AIの予測値を使用しています。"
                 
                 try:
-                    # AIが出したティッカーコードで市場から正確な株価と株数を取得
-                    if 'yahoo_ticker' in data and data['yahoo_ticker']:
-                        yf_ticker = yf.Ticker(data['yahoo_ticker'])
+                    ticker_symbol = data.get('yahoo_ticker', '')
+                    # 証券コードだけの入力だった場合、自動で .T を補完する
+                    if ticker_symbol and not ticker_symbol.endswith('.T') and ticker_symbol.isdigit():
+                        ticker_symbol += '.T'
+                        
+                    if ticker_symbol:
+                        yf_ticker = yf.Ticker(ticker_symbol)
                         info = yf_ticker.info
+                        
+                        # 株価の取得
                         if 'currentPrice' in info and info['currentPrice'] is not None:
                             cp = float(info['currentPrice'])
+                        elif 'regularMarketPrice' in info and info['regularMarketPrice'] is not None:
+                            cp = float(info['regularMarketPrice'])
+                            
+                        # 【重要】分割反映済みの最新株式数を取得
                         if 'sharesOutstanding' in info and info['sharesOutstanding'] is not None:
                             sh = float(info['sharesOutstanding'])
-                except:
-                    pass # 取得失敗時はAIの予測値（フォールバック）を使用
+                            data_source_msg = f"✅ 市場から最新の株価と株式数（分割反映済み: {sh:,.0f}株）を取得し、計算に適用しました。"
+                except Exception as e:
+                    pass
 
-                # --- 2. 共通パラメータの準備 ---
+                # --- 2. 共通パラメータ ---
                 sales = clean_float(data.get('sales', 0))
                 debt = clean_float(data.get('net_debt', 0))
-                ebit_margin = clean_float(data.get('ebit_margin', 0))
-                tax_rate = clean_float(data.get('tax_rate', 0))
-                da_margin = clean_float(data.get('da_margin', 0))
-                capex_margin = clean_float(data.get('capex_margin', 0))
-                nwc_margin = clean_float(data.get('nwc_margin', 0))
+                fcf_margin = clean_float(data.get('fcf_margin', 0))
                 
                 rf = clean_float(data.get('risk_free_rate', 0))
                 beta = clean_float(data.get('beta', 0))
@@ -105,20 +112,14 @@ if st.button("AI本格分析を実行"):
                 tg = tg_val / 100
                 if wacc <= tg: tg = wacc - 0.01
 
-                # --- 3. 本格DCF計算関数 (営業利益・税金・設備投資を考慮) ---
+                # --- 3. 安定DCF計算関数 ---
                 def calculate_scenario(growth_rate):
                     fcf_list = []
                     pv_sum = 0
                     curr_s = sales
                     for y in range(1, 6):
                         curr_s *= (1 + growth_rate/100)
-                        ebit = curr_s * (ebit_margin/100)
-                        nopat = ebit * (1 - tax_rate/100)
-                        da = curr_s * (da_margin/100)
-                        capex = curr_s * (capex_margin/100)
-                        nwc = curr_s * (nwc_margin/100)
-                        
-                        fcf = nopat + da - capex - nwc
+                        fcf = curr_s * (fcf_margin/100)
                         fcf_list.append(fcf)
                         pv_sum += fcf / ((1 + wacc)**y)
                         
@@ -136,9 +137,13 @@ if st.button("AI本格分析を実行"):
 
                 # --- 画面表示 ---
                 st.success(f"### 分析完了: {data.get('company_name', ticker)} ({data.get('yahoo_ticker', '')})")
-                st.caption("※現在の株価と発行済株式数は市場からリアルタイム取得しています（取得失敗時はAI予測値を使用）")
+                
+                # データ取得が成功したかどうかを画面に表示
+                if "✅" in data_source_msg:
+                    st.info(data_source_msg)
+                else:
+                    st.warning(data_source_msg)
 
-                # シナリオをタブで切り替え表示
                 tab1, tab2, tab3 = st.tabs(["📊 基本シナリオ (Base)", "🚀 強気シナリオ (Bull)", "📉 弱気シナリオ (Bear)"])
                 
                 with tab1:
@@ -162,7 +167,7 @@ if st.button("AI本格分析を実行"):
                     c3.metric("上昇余地", f"{bear_up:+.1f}%", delta=f"{bear_up:+.1f}%")
                     st.bar_chart(pd.DataFrame([f / 100000000 for f in bear_fcf], index=[f"{y}年目" for y in range(1, 6)], columns=["FCF (億円)"]))
 
-                with st.expander("プロフェッショナル財務パラメータ詳細"):
+                with st.expander("AI調査データ内訳 (フル桁数)"):
                     st.write("WACC (加重平均資本コスト):", f"{wacc*100:.2f}%")
                     st.write(data)
 
